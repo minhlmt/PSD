@@ -5,7 +5,6 @@ import time
 import random
 import argparse
 import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,41 +12,14 @@ import torchvision
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torchvision.utils import save_image, make_grid
-
 import matplotlib.pyplot as plt
 import torchvision.utils as vutils
-
-from networks import ConvNet, ResNet,BasicBlock,AlexNet,VGG11,ViTModel
-# from resnet import ResNet
-from utils import AverageMeter, accuracy, Normalize, Logger, rand_bbox
-from augment import DiffAug
 from PIL import Image
 import urllib.request
 import tarfile
 
-import argparse
-import torch
-import random
-import numpy as np
-
-
-import os
-import sys
-import time
-import random
-import argparse
-import numpy as np
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
-from torchvision.utils import save_image, make_grid
-
+from networks import ConvNet, ResNet, BasicBlock, AlexNet, VGG11, ViTModel
 # from resnet import ResNet
-from utils import get_default_convnet_setting, AverageMeter, accuracy, Normalize, Logger, rand_bbox
 from augment import DiffAug
 
 
@@ -190,12 +162,11 @@ def define_model(args, num_classes, e_model=None):
     '''
     net_width, net_depth, net_act, net_norm, net_pooling= get_default_convnet_setting()
     if e_model:
-        model = e_model
+        model_name = e_model
     else:
         model_pool = ['convnet','resnet18']
-        model = random.choice(model_pool)
-        print('Random model: {}'.format(model))
-        args.net = model
+        model_name = random.choice(model_pool)
+        print('Random model: {}'.format(model_name))
 
     if args.data == 'imagenette':
         net_depth = 5
@@ -203,16 +174,16 @@ def define_model(args, num_classes, e_model=None):
     else:
         im_size = (32, 32)
 
-    if model == 'convnet':
-        return ConvNet(channel = 3, num_classes= num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'resnet18':
-        return ResNet(BasicBlock, [2,2,2,2], channel=3, num_classes=num_classes)
-    elif model == 'alexnet':
-        return AlexNet(channel=3, num_classes=num_classes)
-    elif model == 'VGG11':
-        return VGG11( channel=3, num_classes=num_classes)
-    elif model =='ViT':
-        return ViTModel((32,32), 10)
+    if model_name == 'convnet':
+        return ConvNet(channel = 3, num_classes= num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size), model_name
+    elif model_name == 'resnet18':
+        return ResNet(BasicBlock, [2,2,2,2], channel=3, num_classes=num_classes), model_name
+    elif model_name == 'alexnet':
+        return AlexNet(channel=3, num_classes=num_classes), model_name
+    elif model_name == 'VGG11':
+        return VGG11( channel=3, num_classes=num_classes), model_name
+    elif model_name =='ViT':
+        return ViTModel((32,32), 10), model_name
 
 def remove_aug(augtype, remove_aug):
     aug_list = []
@@ -223,18 +194,20 @@ def remove_aug(augtype, remove_aug):
     return "_".join(aug_list)
 
 
-def diffaug(args, device= args.device):
+def diffaug(args, device=None):
     """Differentiable augmentation for condensation
     """
+    if device is None:
+        device = args.device
     aug_type = args.aug_type
     if args.data == 'cifar10':
-        normalize = Normalize((0.491, 0.482, 0.447), (0.202, 0.199, 0.201), device=args.device)
+        normalize = Normalize((0.491, 0.482, 0.447), (0.202, 0.199, 0.201), device=device)
     elif args.data == 'cifar100':
-        normalize = Normalize((0.491, 0.482, 0.447), (0.202, 0.199, 0.201), device=args.device)
+        normalize = Normalize((0.491, 0.482, 0.447), (0.202, 0.199, 0.201), device=device)
     elif args.data == 'svhn':
-        normalize = Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), device= args.device)
+        normalize = Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), device=device)
     elif args.data == 'imagenette':
-        normalize = Normalize((0.5,0.5,0.5), (0.5,0.5,0.5), device= args.device)
+        normalize = Normalize((0.5,0.5,0.5), (0.5,0.5,0.5), device=device)
     print("Augmentataion Matching: ", aug_type)
     augment = DiffAug(strategy=aug_type, batch=True)
     aug_batch = transforms.Compose([normalize, augment])
@@ -291,9 +264,9 @@ def attach_hooks(activations, model_name , model):
                 pooled = F.avg_pool2d(output, 4)  # Giữ 4 như trong ResNet của bạn
                 activations['avg_pool'] = pooled
             return hook_func
-        for name,base in (modules):
-            if name.startswith('layer4') and isinstance(base, nn.ReLU):
-                hooks.append(module.register_forward_hook(getActivation(name)))
+        for name, module in (modules):
+            if name.startswith('layer4') and isinstance(module, nn.ReLU):
+                hooks.append(module.register_forward_hook(getActivation(activations, name)))
     return hooks
 
 
@@ -513,7 +486,8 @@ def validate(args, generator, testloader, criterion, aug_rand):
     all_best_top5 = []
     for e_model in args.eval_model:
         print('Evaluating {}'.format(e_model))
-        model = define_model(args, args.num_classes, e_model).to(args.device)
+        model, _ = define_model(args, args.num_classes, e_model)
+        model = model.to(args.device)
         model.train()
         optim_model = torch.optim.SGD(model.parameters(), args.eval_lr, momentum=args.momentum,
                                       weight_decay=args.weight_decay)
@@ -588,13 +562,14 @@ def train(args, epoch, generator, optim_g, trainloader, criterion, aug, aug_rand
 
     generator.train()
     gen_losses = AverageMeter()
-    model = define_model(args, args.num_classes).to(args.device)
+    model, model_name = define_model(args, args.num_classes)
+    model = model.to(args.device)
    
     optim_model = torch.optim.SGD(model.parameters(), args.eval_lr, momentum=args.momentum,
                                   weight_decay=args.weight_decay)
-    if args.net =='convnet':
+    if model_name =='convnet':
         model.load_state_dict(torch.load(args.weight_convnet, map_location=args.device))
-    elif args.net =='resnet18':
+    elif model_name =='resnet18':
         model.load_state_dict(torch.load(args.weight_resnet, map_location=args.device))
     # else:
     #      model.load_state_dict(torch.load('/kaggle/input/resnet34/resnet34_svhn.pth', map_location=args.device))
@@ -613,12 +588,12 @@ def train(args, epoch, generator, optim_g, trainloader, criterion, aug, aug_rand
         img_syn = generator(noise, lab_real)
 
         # 4. Attention-based loss
-        hooks = attach_hooks(activations, model)
+        hooks = attach_hooks(activations, model_name, model)
         output_real,  logit_real= model(img_real)
         activations, original_model_set_activations = refreshActivations(activations)
         delete_hooks(hooks)
 
-        hooks = attach_hooks(activations, model)
+        hooks = attach_hooks(activations, model_name, model)
         output_syn, logit_syn = model(img_syn)
         activations, syn_model_set_activations = refreshActivations(activations)
         delete_hooks(hooks)
@@ -650,3 +625,326 @@ def train(args, epoch, generator, optim_g, trainloader, criterion, aug, aug_rand
         if (batch_idx + 1) % args.print_freq == 0:
             print('[Train Epoch {} Iter {}] G Loss: {:.3f}({:.3f})'.format(
                 epoch, batch_idx + 1, gen_losses.val, gen_losses.avg))
+
+
+def get_time():
+    return str(time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime()))
+
+
+class Logger(object):
+    def __init__(self, fpath=None):
+        self.console = sys.stdout
+        self.file = None
+        if fpath is not None:
+            self.file = open(fpath, 'w')
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *args):
+        self.close()
+
+    def write(self, msg):
+        self.console.write(msg)
+        if self.file is not None:
+            self.file.write(msg)
+
+    def flush(self):
+        self.console.flush()
+        if self.file is not None:
+            self.file.flush()
+            os.fsync(self.file.fileno())
+
+    def close(self):
+        self.console.close()
+        if self.file is not None:
+            self.file.close()
+
+
+class TimeStamp():
+    def __init__(self, print_log=True):
+        self.prev = time.time()
+        self.print_log = print_log
+        self.times = {}
+
+    def set(self):
+        self.prev = time.time()
+
+    def flush(self):
+        if self.print_log:
+            print("\n=========Summary=========")
+            for key in self.times.keys():
+                times = np.array(self.times[key])
+                print(
+                    f"{key}: {times.sum():.4f}s (avg {times.mean():.4f}s, std {times.std():.4f}, count {len(times)})"
+                )
+                self.times[key] = []
+
+    def stamp(self, name=''):
+        if self.print_log:
+            spent = time.time() - self.prev
+            # print(f"{name}: {spent:.4f}s")
+            if name in self.times.keys():
+                self.times[name].append(spent)
+            else:
+                self.times[name] = [spent]
+            self.set()
+
+
+def accuracy(output, target, topk=(1, )):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.reshape(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+
+    return res
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+class Plotter():
+    def __init__(self, path, nepoch, idx=0):
+        self.path = path
+        self.data = {'epoch': [], 'acc_tr': [], 'acc_val': [], 'loss_tr': [], 'loss_val': []}
+        self.nepoch = nepoch
+        self.plot_freq = 10
+        self.idx = idx
+
+    def update(self, epoch, acc_tr, acc_val, loss_tr, loss_val):
+        self.data['epoch'].append(epoch)
+        self.data['acc_tr'].append(acc_tr)
+        self.data['acc_val'].append(acc_val)
+        self.data['loss_tr'].append(loss_tr)
+        self.data['loss_val'].append(loss_val)
+
+        if len(self.data['epoch']) % self.plot_freq == 0:
+            self.plot()
+
+    def plot(self, color='black'):
+        fig, axes = plt.subplots(1, 4, figsize=(4 * 4, 3))
+        fig.tight_layout(h_pad=3, w_pad=3)
+
+        fig.suptitle(f"{self.path}", size=16, y=1.1)
+
+        axes[0].plot(self.data['epoch'], self.data['acc_tr'], color, lw=0.8)
+        axes[0].set_xlim([0, self.nepoch])
+        axes[0].set_ylim([0, 100])
+        axes[0].set_title('acc train')
+
+        axes[1].plot(self.data['epoch'], self.data['acc_val'], color, lw=0.8)
+        axes[1].set_xlim([0, self.nepoch])
+        axes[1].set_ylim([0, 100])
+        axes[1].set_title('acc val')
+
+        axes[2].plot(self.data['epoch'], self.data['loss_tr'], color, lw=0.8)
+        axes[2].set_xlim([0, self.nepoch])
+        axes[2].set_ylim([0, 3])
+        axes[2].set_title('loss train')
+
+        axes[3].plot(self.data['epoch'], self.data['loss_val'], color, lw=0.8)
+        axes[3].set_xlim([0, self.nepoch])
+        axes[3].set_ylim([0, 3])
+        axes[3].set_title('loss val')
+
+        for ax in axes:
+            ax.set_xlabel('epochs')
+
+        plt.savefig(f'{self.path}/curve_{self.idx}.png', bbox_inches='tight')
+        plt.close()
+
+
+def random_indices(y, nclass=10, intraclass=False, device='cpu'):
+    n = len(y)
+    if intraclass:
+        index = torch.arange(n).to(device)
+        for c in range(nclass):
+            index_c = index[y == c]
+            if len(index_c) > 0:
+                randidx = torch.randperm(len(index_c))
+                index[y == c] = index_c[randidx]
+    else:
+        index = torch.randperm(n).to(device)
+    return index
+
+
+def rand_bbox(size, lam):
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    # uniform
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
+
+class Compose(object):
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def __call__(self, img):
+        for t in self.transforms:
+            img = t(img)
+        return img
+
+    def __repr__(self):
+        format_string = self.__class__.__name__ + '('
+        for t in self.transforms:
+            format_string += '\n'
+            format_string += '    {0}'.format(t)
+        format_string += '\n)'
+        return format_string
+
+
+class Lighting(object):
+    """Lighting noise(AlexNet - style PCA - based noise)"""
+    def __init__(self, alphastd, eigval, eigvec, device='cpu'):
+        self.alphastd = alphastd
+        self.eigval = torch.tensor(eigval, device=device)
+        self.eigvec = torch.tensor(eigvec, device=device)
+
+    def __call__(self, img):
+        if self.alphastd == 0:
+            return img
+
+        alpha = img.new().resize_(3).normal_(0, self.alphastd)
+        rgb = self.eigvec.type_as(img).clone() \
+            .mul(alpha.view(1, 3).expand(3, 3)) \
+            .mul(self.eigval.view(1, 3).expand(3, 3)) \
+            .sum(1).squeeze()
+
+        # make differentiable
+        if len(img.shape) == 4:
+            return img + rgb.view(1, 3, 1, 1).expand_as(img)
+        else:
+            return img + rgb.view(3, 1, 1).expand_as(img)
+
+
+class Grayscale(object):
+    def __call__(self, img):
+        gs = img.clone()
+        gs[0].mul_(0.299).add_(0.587, gs[1]).add_(0.114, gs[2])
+        gs[1].copy_(gs[0])
+        gs[2].copy_(gs[0])
+        return gs
+
+
+class Saturation(object):
+    def __init__(self, var):
+        self.var = var
+
+    def __call__(self, img):
+        gs = Grayscale()(img)
+        alpha = random.uniform(-self.var, self.var)
+        return img.lerp(gs, alpha)
+
+
+class Brightness(object):
+    def __init__(self, var):
+        self.var = var
+
+    def __call__(self, img):
+        gs = img.new().resize_as_(img).zero_()
+        alpha = random.uniform(-self.var, self.var)
+        return img.lerp(gs, alpha)
+
+
+class Contrast(object):
+    def __init__(self, var):
+        self.var = var
+
+    def __call__(self, img):
+        gs = Grayscale()(img)
+        gs.fill_(gs.mean())
+        alpha = random.uniform(-self.var, self.var)
+        return img.lerp(gs, alpha)
+
+
+class ColorJitter(object):
+    def __init__(self, brightness=0.4, contrast=0.4, saturation=0.4):
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+
+    def __call__(self, img):
+        self.transforms = []
+        if self.brightness != 0:
+            self.transforms.append(Brightness(self.brightness))
+        if self.contrast != 0:
+            self.transforms.append(Contrast(self.contrast))
+        if self.saturation != 0:
+            self.transforms.append(Saturation(self.saturation))
+
+        random.shuffle(self.transforms)
+        transform = Compose(self.transforms)
+        # print(transform)
+        return transform(img)
+
+
+class CutOut():
+    def __init__(self, ratio, device='cpu'):
+        self.ratio = ratio
+        self.device = device
+
+    def __call__(self, x):
+        n, _, h, w = x.shape
+        cutout_size = [int(h * self.ratio + 0.5), int(w * self.ratio + 0.5)]
+        offset_x = torch.randint(h + (1 - cutout_size[0] % 2), size=[1], device=self.device)[0]
+        offset_y = torch.randint(w + (1 - cutout_size[1] % 2), size=[1], device=self.device)[0]
+
+        grid_batch, grid_x, grid_y = torch.meshgrid(
+            torch.arange(n, dtype=torch.long, device=self.device),
+            torch.arange(cutout_size[0], dtype=torch.long, device=self.device),
+            torch.arange(cutout_size[1], dtype=torch.long, device=self.device),
+        )
+        grid_x = torch.clamp(grid_x + offset_x - cutout_size[0] // 2, min=0, max=h - 1)
+        grid_y = torch.clamp(grid_y + offset_y - cutout_size[1] // 2, min=0, max=w - 1)
+        mask = torch.ones(n, h, w, dtype=x.dtype, device=self.device)
+        mask[grid_batch, grid_x, grid_y] = 0
+
+        x = x * mask.unsqueeze(1)
+        return x
+
+
+class Normalize():
+    def __init__(self, mean, std, device='cpu'):
+        self.mean = torch.tensor(mean, device=device).reshape(1, len(mean), 1, 1)
+        self.std = torch.tensor(std, device=device).reshape(1, len(mean), 1, 1)
+
+    def __call__(self, x, seed=-1):
+        return (x - self.mean) / self.std

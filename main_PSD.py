@@ -1,16 +1,8 @@
 import argparse
-import torch
-import random
-import numpy as np
-
-
 import os
 import sys
-import time
 import random
-import argparse
 import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,7 +14,7 @@ from mmgen.models import build_model
 from model_biggan import model_biggan, train_cfg, test_cfg, optimizer
 
 # from resnet import ResNet
-from utils import Logger, load_data,diffaug, train, validate
+from utils import Logger, load_data, diffaug, train, validate
 from augment import DiffAug
 
 
@@ -36,7 +28,7 @@ def main():
     parser.add_argument('--eval_lr', type=int, default=0.01, help='learning rate for evaluating networks')
     parser.add_argument('--momentum', type=int, default=0.9, help='momentum for SGD')
     parser.add_argument('--weight_decay', type=int, default=5e-4, help='weight decay for SGD')
-    parser.add_argument('--eval_model', type=str, default=['convnet'], help='the model to evaluate, e.g., convnet/resnet18/resnet50/alexnet/vgg11/vit')
+    parser.add_argument('--eval_model', nargs='+', default=['convnet'], help='the model to evaluate, e.g., convnet/resnet18/resnet50/alexnet/vgg11/vit')
     parser.add_argument('--num_workers', type=int, default=0, help='number of workers for data loading')
     parser.add_argument('--print_freq', type=int, default=50, help='print frequency during training')
     parser.add_argument('--eval_interval', type=int, default=5, help='interval for evaluating the model during training')
@@ -52,7 +44,10 @@ def main():
     parser.add_argument('--aug_type', type=str, default='color_crop_cutout', help='augmentation type')
     parser.add_argument('--mixup_net', type=str, default='cut', help='')
     parser.add_argument('--mix-p', type=float, default=-1.0)
-    parser.add_argument('--seed', type=int, default=3407)    
+    parser.add_argument('--seed', type=int, default=3407)
+    parser.add_argument('--tag', type=str, default='', help='tag for output directory')
+    parser.add_argument('--dim_noise', type=int, default=128, help='dimension of noise vector')
+    parser.add_argument('--beta', type=float, default=1.0, help='beta parameter for mixup')
     args = parser.parse_args()
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     random.seed(args.seed)
@@ -81,7 +76,7 @@ def main():
     checkpoint = torch.load(args.weight_biggan)
     state_dict = checkpoint.get('state_dict', checkpoint)
     model_g.load_state_dict(state_dict)
-    generator = model_g.generator_ema.cuda()
+    generator = model_g.generator_ema.to(args.device)
     
     optim_g = torch.optim.Adam(generator.parameters(), lr=0.00002, betas=(0.0, 0.999))
     for g in optim_g.param_groups:
@@ -105,9 +100,8 @@ def main():
 
         # save image for visualization
         generator.eval()
-        test_label = torch.tensor(list(range(10)) * 10)
-        test_noise  = torch.randn(50, args.dim_noise).cuda()
-        test_noise = test_noise.cuda()
+        test_label = torch.tensor(list(range(10)) * 10).to(args.device)
+        test_noise  = torch.randn(50, args.dim_noise).to(args.device)
         test_img_syn = (generator(test_noise,test_label) + 1.0) / 2.0
         test_img_syn = make_grid(test_img_syn, nrow=10)
         save_image(test_img_syn, os.path.join(args.output_dir, 'outputs/img_{}.png'.format(epoch)))
